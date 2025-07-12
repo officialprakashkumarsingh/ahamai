@@ -464,6 +464,22 @@ class UIManager {
         toast.className = `toast toast-${type}`;
         toast.textContent = message;
         
+        // Get color based on type
+        let backgroundColor;
+        switch (type) {
+            case 'error':
+                backgroundColor = '#da3633';
+                break;
+            case 'warning':
+                backgroundColor = '#fb8500';
+                break;
+            case 'info':
+                backgroundColor = '#0366d6';
+                break;
+            default:
+                backgroundColor = '#2ea043';
+        }
+        
         // Style the toast
         Object.assign(toast.style, {
             position: 'fixed',
@@ -472,10 +488,15 @@ class UIManager {
             padding: '12px 20px',
             borderRadius: '8px',
             color: 'white',
-            backgroundColor: type === 'error' ? '#f44336' : '#4caf50',
+            backgroundColor: backgroundColor,
             zIndex: '9999',
             transform: 'translateX(100%)',
-            transition: 'transform 0.3s ease'
+            transition: 'transform 0.3s ease',
+            fontSize: '14px',
+            fontWeight: '500',
+            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+            maxWidth: '300px',
+            wordWrap: 'break-word'
         });
         
         document.body.appendChild(toast);
@@ -494,6 +515,26 @@ class UIManager {
                 }
             }, 300);
         }, 3000);
+    }
+
+    // Show success message
+    showSuccessMessage(message) {
+        this.showToast(message, 'success');
+    }
+
+    // Show error message
+    showErrorMessage(message) {
+        this.showToast(message, 'error');
+    }
+
+    // Show warning message
+    showWarningMessage(message) {
+        this.showToast(message, 'warning');
+    }
+
+    // Show info message
+    showInfoMessage(message) {
+        this.showToast(message, 'info');
     }
 
     // Scroll to bottom of chat
