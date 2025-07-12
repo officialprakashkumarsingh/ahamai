@@ -2,6 +2,8 @@
 class AhamAI {
     constructor() {
         this.geminiAPI = null;
+        this.offlineAI = null;
+        this.mcpServer = null;
         this.externalTools = null;
         this.presentationGenerator = null;
         this.diagramGenerator = null;
@@ -9,6 +11,7 @@ class AhamAI {
         
         this.isInitialized = false;
         this.conversationContext = [];
+        this.isOfflineMode = false;
         
         this.init();
     }
@@ -21,10 +24,15 @@ class AhamAI {
             
             // Initialize components
             this.geminiAPI = new GeminiAPI();
+            this.offlineAI = new OfflineAI();
+            this.mcpServer = new MCPServer();
             this.externalTools = new ExternalTools();
             this.presentationGenerator = new PresentationGenerator();
             this.diagramGenerator = new DiagramGenerator();
             this.uiManager = new UIManager();
+            
+            // Initialize MCP server support
+            await this.mcpServer.initialize();
             
             // Load conversation history
             this.geminiAPI.loadHistory();
@@ -33,7 +41,11 @@ class AhamAI {
             this.setupEventListeners();
             
             // Check API health
-            await this.checkAPIHealth();
+            const isAPIHealthy = await this.checkAPIHealth();
+            if (!isAPIHealthy) {
+                console.warn('API health check failed, switching to offline mode');
+                this.isOfflineMode = true;
+            }
             
             this.isInitialized = true;
             Utils.performance.measure('app-initialized', 'app-init-start');
@@ -115,34 +127,75 @@ class AhamAI {
         }
     }
 
-    // Process message with Gemini API
+    // Process message with AI (online or offline)
     async processMessage(message) {
         try {
-            // Send to Gemini API
-            const response = await this.geminiAPI.sendMessage(message);
+            let response;
+            
+            // Try online mode first, fall back to offline
+            if (!this.isOfflineMode) {
+                try {
+                    response = await this.geminiAPI.sendMessage(message);
+                } catch (error) {
+                    console.warn('Online processing failed, switching to offline mode:', error);
+                    this.isOfflineMode = true;
+                }
+            }
+            
+            // Use offline mode if online failed or if already in offline mode
+            if (this.isOfflineMode) {
+                response = await this.offlineAI.processMessage(message);
+                
+                // For offline responses, handle special types
+                if (response.type === 'diagram') {
+                    // Generate diagram using offline AI
+                    const diagramResult = await this.diagramGenerator.generateDiagram(response.diagramSyntax);
+                    response.diagramGenerated = diagramResult.success;
+                    response.diagramId = diagramResult.diagramId;
+                } else if (response.type === 'presentation') {
+                    // Generate presentation using offline AI
+                    const presentationResult = await this.presentationGenerator.generatePresentation(response.title, response.slides);
+                    response.presentationGenerated = presentationResult.success;
+                    response.presentationId = presentationResult.presentationId;
+                }
+            }
             
             return response;
             
         } catch (error) {
-            console.error('Failed to process message with Gemini:', error);
+            console.error('Failed to process message:', error);
             throw error;
         }
     }
 
-    // Handle AI response
+    // Handle AI response (online or offline)
     async handleResponse(response, originalMessage) {
-        const { content, toolUsage } = response;
+        // Handle offline responses
+        if (this.isOfflineMode && typeof response === 'object') {
+            if (response.type === 'diagram') {
+                await this.handleOfflineDiagramGeneration(response);
+            } else if (response.type === 'presentation') {
+                await this.handleOfflinePresentationGeneration(response);
+            } else {
+                // Regular offline response
+                this.uiManager.addMessage(response.text, false, { typeAnimation: true });
+            }
+            return;
+        }
+        
+        // Handle online responses (original logic)
+        const { content, toolUsage } = response || { content: response, toolUsage: {} };
         
         // Check if tools need to be used
-        if (toolUsage.search || toolUsage.wikipedia) {
+        if (toolUsage && (toolUsage.search || toolUsage.wikipedia)) {
             await this.handleSearchTools(content, toolUsage, originalMessage);
-        } else if (toolUsage.presentation) {
+        } else if (toolUsage && toolUsage.presentation) {
             await this.handlePresentationGeneration(content);
-        } else if (toolUsage.diagram) {
+        } else if (toolUsage && toolUsage.diagram) {
             await this.handleDiagramGeneration(content);
         } else {
             // Regular response
-            this.uiManager.addMessage(content, false, { typeAnimation: true });
+            this.uiManager.addMessage(content || response, false, { typeAnimation: true });
         }
     }
 
@@ -211,7 +264,69 @@ class AhamAI {
         }
     }
 
-    // Handle diagram generation
+    // Handle offline diagram generation
+    async handleOfflineDiagramGeneration(response) {
+        try {
+            this.uiManager.showLoading('Generating diagram...');
+            
+            // Add the AI message first
+            this.uiManager.addMessage(response.text, false, { typeAnimation: true });
+            
+            // Generate the diagram
+            const result = await this.diagramGenerator.generateDiagram(response.diagramSyntax);
+            
+            if (result.success) {
+                // Show diagram in a modal or container
+                this.uiManager.showModal('diagram', {
+                    title: response.title || 'Generated Diagram',
+                    content: result.svgContent,
+                    diagramId: result.diagramId
+                });
+                
+                this.uiManager.showSuccessMessage(CONFIG.SUCCESS_MESSAGES.DIAGRAM_GENERATED);
+            } else {
+                this.uiManager.showErrorMessage('Failed to generate diagram: ' + result.error);
+            }
+            
+        } catch (error) {
+            Utils.handleError(error, 'AhamAI.handleOfflineDiagramGeneration');
+            this.uiManager.showErrorMessage('Error generating diagram');
+        } finally {
+            this.uiManager.hideLoading();
+        }
+    }
+
+    // Handle offline presentation generation
+    async handleOfflinePresentationGeneration(response) {
+        try {
+            this.uiManager.showLoading('Creating presentation...');
+            
+            // Add the AI message first
+            this.uiManager.addMessage(response.text, false, { typeAnimation: true });
+            
+            // Generate the presentation
+            const result = await this.presentationGenerator.generatePresentation(response.title, response.slides);
+            
+            if (result.success) {
+                // Show presentation in modal
+                this.uiManager.showModal('presentation', {
+                    title: response.title,
+                    slides: response.slides,
+                    presentationId: result.presentationId
+                });
+                
+                this.uiManager.showSuccessMessage(CONFIG.SUCCESS_MESSAGES.PRESENTATION_GENERATED);
+            } else {
+                this.uiManager.showErrorMessage('Failed to create presentation: ' + result.error);
+            }
+            
+        } catch (error) {
+            Utils.handleError(error, 'AhamAI.handleOfflinePresentationGeneration');
+            this.uiManager.showErrorMessage('Error creating presentation');
+        } finally {
+            this.uiManager.hideLoading();
+        }
+    }
     async handleDiagramGeneration(content) {
         try {
             this.uiManager.showLoading('Generating diagram...');

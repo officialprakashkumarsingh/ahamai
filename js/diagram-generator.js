@@ -13,6 +13,13 @@ class DiagramGenerator {
         }
 
         try {
+            // Check if Mermaid is available
+            if (typeof mermaid === 'undefined') {
+                console.warn('Mermaid not available, using fallback diagram generation');
+                this.mermaidInitialized = false;
+                return false;
+            }
+            
             // Configure Mermaid
             mermaid.initialize({
                 ...CONFIG.MERMAID_CONFIG,
@@ -22,9 +29,11 @@ class DiagramGenerator {
             
             this.mermaidInitialized = true;
             console.log('Mermaid initialized successfully');
+            return true;
         } catch (error) {
-            Utils.handleError(error, 'DiagramGenerator.initializeMermaid');
-            throw new Error('Failed to initialize Mermaid');
+            console.warn('Mermaid initialization failed, using fallback:', error);
+            this.mermaidInitialized = false;
+            return false;
         }
     }
 
@@ -33,7 +42,7 @@ class DiagramGenerator {
         try {
             Utils.performance.mark('diagram-generation-start');
             
-            await this.initializeMermaid();
+            const mermaidReady = await this.initializeMermaid();
             
             // Parse diagram content
             const diagramData = this.parseDiagramContent(content);
@@ -42,22 +51,29 @@ class DiagramGenerator {
                 throw new Error('No valid diagram syntax found in content');
             }
             
-            // Validate Mermaid syntax
-            const isValid = await this.validateMermaidSyntax(diagramData.syntax);
-            if (!isValid) {
-                // Try to fix common issues
-                diagramData.syntax = this.fixCommonSyntaxIssues(diagramData.syntax);
+            let svgContent;
+            
+            if (mermaidReady && this.mermaidInitialized) {
+                // Validate Mermaid syntax
+                const isValid = await this.validateMermaidSyntax(diagramData.syntax);
+                if (!isValid) {
+                    // Try to fix common issues
+                    diagramData.syntax = this.fixCommonSyntaxIssues(diagramData.syntax);
+                }
+                
+                // Generate unique ID for this diagram
+                const diagramId = `diagram-${++this.diagramCounter}-${Utils.generateId()}`;
+                
+                // Render diagram with Mermaid
+                svgContent = await this.renderMermaidDiagram(diagramData.syntax, diagramId);
+            } else {
+                // Fallback: generate simple text-based diagram
+                svgContent = this.generateFallbackDiagram(diagramData);
             }
-            
-            // Generate unique ID for this diagram
-            const diagramId = `diagram-${++this.diagramCounter}-${Utils.generateId()}`;
-            
-            // Render diagram
-            const svgContent = await this.renderMermaidDiagram(diagramData.syntax, diagramId);
             
             // Store current diagram
             this.currentDiagram = {
-                id: diagramId,
+                id: `diagram-${++this.diagramCounter}`,
                 syntax: diagramData.syntax,
                 type: diagramData.type,
                 title: diagramData.title,
@@ -71,7 +87,7 @@ class DiagramGenerator {
             
             return {
                 success: true,
-                diagramId: diagramId,
+                diagramId: this.currentDiagram.id,
                 syntax: diagramData.syntax,
                 type: diagramData.type,
                 title: diagramData.title,
@@ -475,6 +491,67 @@ class DiagramGenerator {
             createdAt: this.currentDiagram.createdAt,
             hasDescription: !!this.currentDiagram.description
         };
+    }
+
+    // Generate fallback diagram when Mermaid is not available
+    generateFallbackDiagram(diagramData) {
+        const { title, type, syntax } = diagramData;
+        
+        // Create a simple HTML-based diagram representation
+        const fallbackHTML = `
+            <div class="fallback-diagram" style="
+                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+                border: 2px solid #e1e5e9;
+                border-radius: 12px;
+                padding: 24px;
+                text-align: center;
+                font-family: Inter, sans-serif;
+                max-width: 600px;
+                margin: 0 auto;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            ">
+                <h3 style="
+                    color: #24292f;
+                    margin: 0 0 16px 0;
+                    font-size: 18px;
+                    font-weight: 600;
+                ">${title}</h3>
+                <div style="
+                    background: white;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin: 16px 0;
+                    border-left: 4px solid #0366d6;
+                ">
+                    <h4 style="
+                        color: #656d76;
+                        margin: 0 0 12px 0;
+                        font-size: 14px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    ">Diagram Type: ${type}</h4>
+                    <pre style="
+                        background: #f6f8fa;
+                        border-radius: 6px;
+                        padding: 12px;
+                        margin: 0;
+                        font-size: 12px;
+                        color: #24292f;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                        text-align: left;
+                    ">${syntax}</pre>
+                </div>
+                <p style="
+                    color: #656d76;
+                    font-size: 12px;
+                    margin: 16px 0 0 0;
+                    font-style: italic;
+                ">Interactive diagram generation requires Mermaid.js</p>
+            </div>
+        `;
+        
+        return fallbackHTML;
     }
 
     // Clear current diagram
